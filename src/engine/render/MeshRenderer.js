@@ -5,6 +5,7 @@ import { blendState } from './Material.js';
 import { SceneLighting } from './wgsl/lighting.js';
 import { FrameUniforms } from './Frame.js';
 import { Frustum, Matrix4, Sphere, Vector3 } from '../math/index.js';
+import { selectNaniteClusters } from '../geometry/NaniteClusters.js';
 
 // Draws scene meshes: geometry upload, pipeline cache, per-draw uniforms, culling and sorting.
 //
@@ -43,7 +44,7 @@ export class MeshRenderer {
 		this.drawData = null;
 		this.drawCount = 0;
 		this.frame = - 1;
-		this.stats = { draws: 0, triangles: 0, pipelines: 0 };
+		this.stats = { draws: 0, triangles: 0, pipelines: 0, naniteClusters: 0, naniteCulled: 0 };
 		this.drawLayout = null;
 		this.drawBindGroup = null;
 		// true: a draw compiles its pipeline on the spot (one-off bakes, portraits, tests); the engine's
@@ -85,6 +86,8 @@ export class MeshRenderer {
 		} );
 		this.stats.draws = 0;
 		this.stats.triangles = 0;
+		this.stats.naniteClusters = 0;
+		this.stats.naniteCulled = 0;
 
 	}
 
@@ -404,9 +407,17 @@ export class MeshRenderer {
 			if ( ! o.visible && ! all ) return;
 			if ( o.isMesh && o.material && o.geometry && ( o.layers.mask & layerMask ) !== 0 && ( ! filter || filter( o ) ) && ( kind !== 'depth' || o.castShadow ) ) {
 
-				if ( all || ! cull || ! camera || o.frustumCulled === false || this._inFrustum( o ) ) {
+					if ( all || ! cull || ! camera || o.frustumCulled === false || this._inFrustum( o ) ) {
 
-					// ported systems use this for their own LOD / culling (called per pass, as three does)
+						if ( ! all && camera && o.geometry.userData && o.geometry.userData.nanite ) {
+							const clusters = selectNaniteClusters( o.geometry, camera, o );
+							this.stats.naniteClusters += o.geometry.userData.nanite.clusters.length;
+							this.stats.naniteCulled += o.geometry.userData.nanite.culled;
+							if ( clusters && clusters.length === 0 ) return;
+						}
+
+						// ported systems use this for their own LOD / culling (called per pass, as three does)
+
 					if ( o.onBeforeRender ) o.onBeforeRender( null, null, camera, o.geometry, o.material, null );
 					if ( o.visible || all ) this._addItems( o, opaque, transparent );
 

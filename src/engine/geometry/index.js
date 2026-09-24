@@ -11,3 +11,4 @@ export { PolyhedronGeometry, IcosahedronGeometry } from './PolyhedronGeometry.js
 export { TubeGeometry } from './TubeGeometry.js';
 export { RoundedBoxGeometry } from './RoundedBoxGeometry.js';
 export { BufferGeometryUtils, mergeGeometries, mergeVertices, mergeAttributes } from './BufferGeometryUtils.js';
+export { buildNaniteClusters, selectNaniteClusters, naniteStats, markNaniteGeometry } from './NaniteClusters.js';

@@ -11,6 +11,7 @@ import { Box3 } from '../math/Box3.js';
 import { Sphere } from '../math/Sphere.js';
 import { generateUUID } from '../math/MathUtils.js';
 import { BufferAttribute, Float32BufferAttribute, Uint16BufferAttribute, Uint32BufferAttribute } from './BufferAttribute.js';
+import { markNaniteGeometry } from './NaniteClusters.js';
 
 let _id = 0;
 const _m1 = /*@__PURE__*/ new Matrix4();
@@ -62,6 +63,11 @@ export class BufferGeometry extends EventDispatcher {
 
 	setIndirect( indirect, offset = 0 ) { this.indirect = indirect; this.indirectOffset = offset; return this; }
 	getIndirect() { return this.indirect; }
+
+	// Opt into Nanite-style cluster metadata and hierarchical visibility queries.
+	// Rendering remains compatible with regular indexed draws until a GPU-driven
+	// indirect backend is available.
+	buildNaniteClusters( options ) { markNaniteGeometry( this, options ); return this; }
 	getAttribute( name ) { return this.attributes[ name ]; }
 	setAttribute( name, attr ) { this.attributes[ name ] = attr; this.attributesVersion = ( this.attributesVersion || 0 ) + 1; return this; }
 	deleteAttribute( name ) { delete this.attributes[ name ]; this.attributesVersion = ( this.attributesVersion || 0 ) + 1; return this; }
