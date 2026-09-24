@@ -171,6 +171,8 @@ export class Game {
 
 		}
 
+		if ( inp.hit( 'KeyM' ) && this.minimap ) this.minimap.toggleExpanded();
+		if ( inp.hit( 'KeyK' ) ) app.toggleWireframe();
 		if ( this.hud && ( inp.hit( 'KeyI' ) || inp.hit( 'Tab' ) ) ) this.hud.toggleInventory();
 		if ( this.hud && inp.hit( 'Escape' ) ) {
 

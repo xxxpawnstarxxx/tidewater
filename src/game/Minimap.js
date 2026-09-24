@@ -21,8 +21,12 @@ const ROWS_PER_FRAME = 48;
 const CSS = /* css */`
 .gm-map { position: absolute; right: var(--tw-edge); bottom: var(--tw-edge); width: calc(184 * var(--tw-u)); height: calc(184 * var(--tw-u));
 	border-radius: 50%; padding: calc(5 * var(--tw-u)); pointer-events: none;
-	transition: right var(--tw-slow) var(--tw-ease), opacity var(--tw-med) var(--tw-ease); }
+	transition: right var(--tw-slow) var(--tw-ease), bottom var(--tw-slow) var(--tw-ease), width var(--tw-med) var(--tw-ease), height var(--tw-med) var(--tw-ease), opacity var(--tw-med) var(--tw-ease); }
 .tw-root[data-panel='open'] .gm-map { right: calc(var(--tw-panel-w) + 2 * var(--tw-3)); }
+.gm-map.is-expanded { right: 50%; bottom: 50%; width: min(78vw, 760px); height: min(78vw, 760px); transform: translate(50%, 50%); z-index: 20; pointer-events: auto; }
+.gm-map.is-expanded::after { content: 'M · close map'; position: absolute; left: 50%; bottom: calc(-26 * var(--tw-u)); transform: translateX(-50%); color: var(--tw-ink-3); font: 500 var(--tw-fs-xs) var(--tw-mono); white-space: nowrap; text-shadow: 0 1px 3px #000; }
+.gm-map.is-expanded .gm-map-label { display: block; }
+.gm-map.is-expanded .gm-map-me svg { width: calc(26 * var(--tw-u)); height: calc(26 * var(--tw-u)); left: calc(-13 * var(--tw-u)); top: calc(-14 * var(--tw-u)); }
 .gm-map-view { position: relative; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: #0b2c48;
 	box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), inset 0 0 18px rgba(0,0,0,0.45); }
 .gm-map-view canvas { position: absolute; left: 0; top: 0; width: ${ N }px; height: ${ N }px; transform-origin: 0 0; image-rendering: auto; }
@@ -109,6 +113,8 @@ export class Minimap {
 			<div class="gm-map-marks"></div>
 			<div class="gm-map-me"><svg viewBox="0 0 24 24"><path d="M12 2 20 21 12 16.5 4 21Z" fill="#fff" stroke="#0b1418" stroke-width="1.4" stroke-linejoin="round"/></svg></div></div>` );
 		this.el.setAttribute( 'aria-hidden', 'true' );
+		this.el.setAttribute( 'role', 'dialog' );
+		this.el.setAttribute( 'aria-label', 'Island map' );
 		this.view = this.el.querySelector( '.gm-map-view' );
 		this.canvas = this.el.querySelector( 'canvas' );
 		this.marks = this.el.querySelector( '.gm-map-marks' );
@@ -185,14 +191,23 @@ export class Minimap {
 
 	}
 
-	highlight( ids = [] ) {
+		highlight( ids = [] ) {
 
-		this._hot = new Set( ids );
-		for ( const m of this.markers ) this._toggle( m.el, 'is-hot', this._hot.has( m.id ) );
+			this._hot = new Set( ids );
+			for ( const m of this.markers ) this._toggle( m.el, 'is-hot', this._hot.has( m.id ) );
 
-	}
+		}
 
-	// ---- bake (chunked)
+		toggleExpanded( expanded = ! this.expanded ) {
+
+			this.expanded = expanded;
+			this._toggle( this.el, 'is-expanded', expanded );
+			this.el.setAttribute( 'aria-hidden', expanded ? 'false' : 'true' );
+			if ( expanded ) this._viewSize = - 1;
+
+		}
+
+		// ---- bake (chunked)
 	_bakeStep() {
 
 		const B = this._bake;

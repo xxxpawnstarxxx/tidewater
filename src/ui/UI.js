@@ -2156,7 +2156,9 @@ export class UI {
 						${ row( k( 'F' ), 'Free camera' ) }
 						${ row( k( 'T' ), 'Pause time' ) }
 						${ row( k( 'L' ), 'Flashlight' ) }
-						${ row( k( 'M' ), 'Mute' ) }
+						${ row( k( 'N' ), 'Mute' ) }
+							${ row( k( 'M' ), 'Open / close map' ) }
+							${ row( k( 'K' ), 'Wireframe view' ) }
 					</section>
 					<section>
 						<h3>Interface</h3>

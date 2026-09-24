@@ -507,6 +507,24 @@ fn terrainWetness( xz: vec2f, h: f32 ) -> vec2f {
 	}
 
 	// Free (debug) camera on F; the walker / boat resumes where it was left.
+	toggleWireframe() {
+
+		this.wireframe = ! this.wireframe;
+		this.scene.traverse( ( o ) => {
+
+			if ( ! o.material ) return;
+			const materials = Array.isArray( o.material ) ? o.material : [ o.material ];
+			for ( const material of materials ) {
+
+				if ( material.userData && material.userData.wireframeSafe ) material.setDefine( 'WIREFRAME_DEBUG', this.wireframe ? 1 : 0 );
+
+			}
+
+		} );
+		if ( this.ui ) this.ui.ui.toast( this.wireframe ? 'Wireframe view on' : 'Wireframe view off' );
+
+	}
+
 	setFreeCam( on ) {
 
 		if ( on === this.freeCam ) return;
@@ -620,7 +638,7 @@ fn terrainWetness( xz: vec2f, h: f32 ) -> vec2f {
 
 		}
 
-		if ( this.input.hit( 'KeyM' ) && this.audio ) {
+		if ( this.input.hit( 'KeyN' ) && this.audio ) {
 
 			this.audio.setMuted( ! this.audio.muted );
 			if ( this.ui ) this.ui.ui.toast( this.audio.muted ? 'Sound off' : 'Sound on' );
