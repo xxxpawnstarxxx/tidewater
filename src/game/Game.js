@@ -9,9 +9,7 @@ import { FishStand } from './FishStand.js';
 import { Chandlery } from './Chandlery.js';
 import { CatchDisplay } from './CatchDisplay.js';
 import { UPGRADES, fuelBurn } from './Gear.js';
-import { GameHUD } from './GameHUD.js';
-import { Minimap } from './Minimap.js';
-import { Guide } from './Guide.js';
+import { GameSystemGroup } from './systems/GameSystems.js';
 
 // how long the catch card stays up unless dismissed (ms)
 const CATCH_CARD_MS = 9000;
@@ -30,6 +28,7 @@ export class Game {
 		this.app = app;
 		this.state = new GameState();
 		this.state.load();
+		this.systems = new GameSystemGroup( this );
 		this.rod = new FishingRod( { scene: app.scene, camera: app.camera, query: app.query, terrain: app.terrainData, audio: app.audio } );
 		this.rod.onLand = ( where ) => this.onBobberLanded( where );
 		this.stand = new FishStand( { scene: app.scene, terrain: app.terrainData, colliders: app.colliders } );
@@ -143,43 +142,10 @@ export class Game {
 
 		const app = this.app, p = app.player, inp = app.input, rod = this.rod;
 		this._cardDismissed = false;
-		if ( ! this.hud && app.ui && app.ui.ui && typeof document !== 'undefined' && document.head ) {
-
-			const ui = app.ui.ui;
-			this.hud = new GameHUD( ui, this );
-			// the minimap (lower right) and the first-play guide (intro, one-time tips; replay from F1)
-			this.minimap = new Minimap( ui.hud || ui.root, this );
-			this.guide = new Guide( ui, this, this.minimap );
-			ui.onReplayGuide = () => this.guide.replay();
-
-		}
+		if ( ! this.systems.context.started ) this.systems.start( this );
+		this.systems.update( dt, this );
 
 		const can = this.canFish;
-		if ( inp.hit( 'KeyR' ) && can && ! this.fight ) {
-
-			rod.equip( ! rod.equipped );
-			if ( ! rod.equipped ) this.cancelLine();
-			this.toast( rod.equipped ? 'Rod out · hold left mouse to cast' : 'Rod away', 1600 );
-
-		}
-
-		if ( ! can && rod.equipped ) {
-
-			// swimming, driving, free camera: the line comes in and the rod goes away
-			this.cancelLine( true );
-			rod.equip( false );
-
-		}
-
-		if ( inp.hit( 'KeyM' ) && this.minimap ) this.minimap.toggleExpanded();
-		if ( inp.hit( 'KeyK' ) ) app.toggleWireframe();
-		if ( this.hud && ( inp.hit( 'KeyI' ) || inp.hit( 'Tab' ) ) ) this.hud.toggleInventory();
-		if ( this.hud && inp.hit( 'Escape' ) ) {
-
-			this.hud.toggleInventory( false );
-			this.hud.closeStand();
-
-		}
 
 		// mouse edges (the left button also looks around while the pointer isn't captured)
 		const lmb = inp.mouseDown && inp.enabled, rmb = inp.rightDown && inp.enabled;
@@ -268,20 +234,21 @@ export class Game {
 		// prompts when the player has nothing to say
 		if ( ! p.prompt && can ) p.prompt = this.prompt();
 
-		const aboard = p.mode === 'boat' || p.mode === 'deck';
-		// the catch card's live fish portrait (or one queued thumbnail)
-		if ( this.hud && this.hud.portrait ) this.hud.portrait.update( dt );
-		if ( this.hud ) this.hud.update( {
+
+	}
+
+	getHUDState() {
+
+		const aboard = this.app.player.mode === 'boat' || this.app.player.mode === 'deck';
+		return {
 			fuel: aboard ? { litres: this.state.fuelL, tank: this.state.stats.fuelL } : null,
 			sonar: aboard && this.state.stats.finder ? this._sonar : null,
 			fight: this.fight,
-			casting: rod.state === 'windup',
-			power: rod.power,
+			casting: this.rod.state === 'windup',
+			power: this.rod.power,
 			bite: this.bite && this.bite.phase === 'take',
-			aiming: rod.equipped,
-		} );
-		if ( this.minimap ) this.minimap.update( dt );
-		if ( this.guide ) this.guide.update( dt );
+			aiming: this.rod.equipped,
+		};
 
 	}
 
