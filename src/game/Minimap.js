@@ -12,20 +12,22 @@ import { CHANDLERY } from './Chandlery.js';
 // Per frame it only writes a few CSS transforms. The bake runs in row chunks over the first frames.
 //   const map = new Minimap( hudEl, game );  map.update( dt );  map.highlight( [ 'joe', 'marta' ] )
 
-const N = 640; // baked canvas size (px)
-const EXT = 1280; // metres covered by the bake
-const X0 = - EXT / 2, Z0 = - 180 - EXT / 2; // world at canvas (0, 0): the island sits north of the bay
-const PPM = N / EXT; // canvas px per metre
-const ROWS_PER_FRAME = 48;
+const N = 768; // high-resolution dynamic map canvas
+const MAP_PIXELS = 512; // samples per refresh; CSS interpolation keeps the result crisp
+const MAP_REFRESH = 0.08; // refresh while moving, instead of baking a stale world map
+const WORLD_PAD = 1.15; // keep the live view slightly beyond the circular mask
 
 const CSS = /* css */`
 .gm-map { position: absolute; right: var(--tw-edge); bottom: var(--tw-edge); width: calc(184 * var(--tw-u)); height: calc(184 * var(--tw-u));
 	border-radius: 50%; padding: calc(5 * var(--tw-u)); pointer-events: none;
 	transition: right var(--tw-slow) var(--tw-ease), bottom var(--tw-slow) var(--tw-ease), width var(--tw-med) var(--tw-ease), height var(--tw-med) var(--tw-ease), opacity var(--tw-med) var(--tw-ease); }
 .tw-root[data-panel='open'] .gm-map { right: calc(var(--tw-panel-w) + 2 * var(--tw-3)); }
-.gm-map.is-expanded { right: 50%; bottom: 50%; width: min(78vw, 760px); height: min(78vw, 760px); transform: translate(50%, 50%); z-index: 20; pointer-events: auto; }
-.gm-map.is-expanded::after { content: 'M · close map'; position: absolute; left: 50%; bottom: calc(-26 * var(--tw-u)); transform: translateX(-50%); color: var(--tw-ink-3); font: 500 var(--tw-fs-xs) var(--tw-mono); white-space: nowrap; text-shadow: 0 1px 3px #000; }
+.gm-map.is-expanded { right: 50%; bottom: 50%; width: min(82vw, 900px); height: min(82vw, 900px); transform: translate(50%, 50%); z-index: 20; pointer-events: auto; border-radius: 28px; padding: calc(8 * var(--tw-u)); background: linear-gradient(145deg, rgba(15, 32, 43, .96), rgba(7, 17, 27, .98)); box-shadow: 0 28px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(155, 238, 224, .24), inset 0 0 0 1px rgba(255,255,255,.08); }
+.gm-map.is-expanded::before { content: 'TACTICAL SURVEY  /  LIVE TERRAIN'; position: absolute; left: calc(24 * var(--tw-u)); top: calc(16 * var(--tw-u)); z-index: 2; color: rgba(217, 246, 237, .82); font: 600 var(--tw-fs-xs) var(--tw-mono); letter-spacing: .16em; text-shadow: 0 1px 6px #06131d; }
+.gm-map.is-expanded::after { content: 'M · close map   |   LIVE WORLD DATA'; position: absolute; left: 50%; bottom: calc(-28 * var(--tw-u)); transform: translateX(-50%); color: var(--tw-ink-3); font: 500 var(--tw-fs-xs) var(--tw-mono); white-space: nowrap; text-shadow: 0 1px 3px #000; }
 .gm-map.is-expanded .gm-map-label { display: block; }
+.gm-map.is-expanded .gm-map-view { border-radius: 20px; }
+.gm-map.is-expanded .gm-map-vig { background: linear-gradient(180deg, rgba(4, 14, 21, .32), transparent 18%, transparent 78%, rgba(4, 14, 21, .38)); }
 .gm-map.is-expanded .gm-map-me svg { width: calc(26 * var(--tw-u)); height: calc(26 * var(--tw-u)); left: calc(-13 * var(--tw-u)); top: calc(-14 * var(--tw-u)); }
 .gm-map-view { position: relative; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: #0b2c48;
 	box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), inset 0 0 18px rgba(0,0,0,0.45); }
@@ -153,9 +155,8 @@ export class Minimap {
 		this.radiusM = 110; // world radius shown (m), eased between on foot and at sea
 		this._hot = new Set();
 		this._size = 0;
-		this._bake = { row: 0, ctx: this.canvas.getContext( '2d' ), img: null, h: null, done: false };
-		this._bake.img = this._bake.ctx.createImageData( N, N );
-		this._bake.h = new Float32Array( N * N );
+		this._bake = { ctx: this.canvas.getContext( '2d', { alpha: false } ) };
+		this._mapT = 0;
 		// the view's size, kept by a ResizeObserver (reading clientWidth per frame forces a style +
 		// layout pass right after last frame's transform writes)
 		this._viewSize = - 1;
@@ -207,125 +208,50 @@ export class Minimap {
 
 		}
 
-		// ---- bake (chunked)
-	_bakeStep() {
+		// ---- realtime renderer
+	_renderRealtime( x, z, radiusM ) {
 
-		const B = this._bake;
-		if ( B.done ) return;
-		const T = this.game.app.terrainData;
-		const res = T.res, tex = T.texel, org = T.origin;
-		const idx = ( x, z ) => {
-
-			const i = Math.floor( ( x - org ) / tex ), j = Math.floor( ( z - org ) / tex );
-			return i < 0 || j < 0 || i >= res || j >= res ? - 1 : j * res + i;
-
+		const T = this.game.app.terrainData, ctx = this._bake.ctx;
+		const n = MAP_PIXELS, scale = ( radiusM * WORLD_PAD * 2 ) / n;
+		const idx = ( wx, wz ) => {
+			const i = Math.floor( ( wx - T.origin ) / T.texel ), j = Math.floor( ( wz - T.origin ) / T.texel );
+			return i < 0 || j < 0 || i >= T.res || j >= T.res ? - 1 : j * T.res + i;
 		};
-
-		const d = B.img.data;
-		const end = Math.min( N, B.row + ROWS_PER_FRAME );
-		for ( let py = B.row; py < end; py ++ ) for ( let px = 0; px < N; px ++ ) {
-
-			const x = X0 + ( px + 0.5 ) / PPM, z = Z0 + ( py + 0.5 ) / PPM;
-			const hgt = T.heightAt( x, z );
-			B.h[ py * N + px ] = hgt;
-			const k = idx( x, z );
+		const img = ctx.createImageData( n, n ), d = img.data;
+		for ( let py = 0; py < n; py ++ ) for ( let px = 0; px < n; px ++ ) {
+			const wx = x + ( px + 0.5 - n / 2 ) * scale, wz = z + ( py + 0.5 - n / 2 ) * scale;
+			const hgt = T.heightAt( wx, wz ), k = idx( wx, wz ), dep = - hgt;
 			let c;
 			if ( hgt < 0 ) {
-
-				const dep = - hgt;
-				c = dep < 6 ? mix( C.shallow, C.mid, smooth( 0.3, 6, dep ) ) : mix( C.mid, C.deep, smooth( 6, 40, dep ) );
-				if ( k >= 0 ) {
-
-					c = mix( c, C.grassSea, ( T.seagrass[ k ] / 255 ) * 0.55 );
-					c = mix( c, C.rubble, ( T.rubble[ k ] / 255 ) * 0.6 );
-
-				}
-
-				c = mix( c, C.foam, smooth( 0.5, 0.0, dep ) * 0.45 );
-
+				c = dep < 7 ? mix( C.shallow, C.mid, smooth( 0.2, 7, dep ) ) : mix( C.mid, C.deep, smooth( 7, 48, dep ) );
+				if ( k >= 0 ) { c = mix( c, C.grassSea, ( T.seagrass[ k ] / 255 ) * 0.6 ); c = mix( c, C.rubble, ( T.rubble[ k ] / 255 ) * 0.65 ); }
+				c = mix( c, C.foam, smooth( 0.8, 0, dep ) * 0.55 );
 			} else {
-
 				const rock = k >= 0 ? T.rock[ k ] : 0, sand = k >= 0 ? T.sand[ k ] / 255 : 0;
-				c = mix( C.grass, C.scrub, smooth( 4, 16, hgt ) );
-				c = mix( c, C.forest, smooth( 12, 40, hgt ) );
-				c = mix( c, C.sand, Math.max( sand, smooth( 1.6, 0.4, hgt ) ) );
-				c = mix( c, C.wet, smooth( 0.5, 0.0, hgt ) * 0.6 );
-				c = mix( c, C.rock, smooth( 0.35, 0.7, rock ) );
-				if ( k >= 0 ) {
-
-					c = mix( c, C.path, ( T.path[ k ] / 255 ) * 0.85 );
-					c = mix( c, C.scarp, ( T.scarp[ k ] / 255 ) * 0.5 );
-
-				}
-
-				// hill shading, light from the north-west
-				const e = 2.5;
-				const gx = ( T.heightAt( x + e, z ) - T.heightAt( x - e, z ) ) / ( 2 * e );
-				const gz = ( T.heightAt( x, z + e ) - T.heightAt( x, z - e ) ) / ( 2 * e );
-				const nl = ( - gx * - 0.6 + - gz * - 0.6 + 1 * 0.53 ) / Math.sqrt( gx * gx + gz * gz + 1 );
-				const s = 0.7 + 0.45 * sat( nl / 0.53 );
-				c = [ c[ 0 ] * s, c[ 1 ] * s, c[ 2 ] * s ];
-
+				c = mix( C.grass, C.scrub, smooth( 4, 16, hgt ) ); c = mix( c, C.forest, smooth( 12, 40, hgt ) );
+				c = mix( c, C.sand, Math.max( sand, smooth( 1.6, 0.4, hgt ) ) ); c = mix( c, C.wet, smooth( 0.5, 0, hgt ) * 0.6 ); c = mix( c, C.rock, smooth( 0.35, 0.7, rock ) );
+				if ( k >= 0 ) { c = mix( c, C.path, ( T.path[ k ] / 255 ) * 0.9 ); c = mix( c, C.scarp, ( T.scarp[ k ] / 255 ) * 0.5 ); }
+				const e = Math.max( 1.5, scale * 1.5 ), gx = ( T.heightAt( wx + e, wz ) - T.heightAt( wx - e, wz ) ) / ( 2 * e ), gz = ( T.heightAt( wx, wz + e ) - T.heightAt( wx, wz - e ) ) / ( 2 * e );
+				const shade = 0.72 + 0.42 * sat( ( gx * 0.6 + gz * 0.6 + 0.53 ) / 0.53 ); c = [ c[ 0 ] * shade, c[ 1 ] * shade, c[ 2 ] * shade ];
 			}
-
-			const o = ( py * N + px ) * 4;
-			d[ o ] = c[ 0 ]; d[ o + 1 ] = c[ 1 ]; d[ o + 2 ] = c[ 2 ]; d[ o + 3 ] = 255;
-
+			const o = ( py * n + px ) * 4; d[ o ] = c[ 0 ]; d[ o + 1 ] = c[ 1 ]; d[ o + 2 ] = c[ 2 ]; d[ o + 3 ] = 255;
 		}
-
-		B.row = end;
-		if ( B.row < N ) return;
-
-		// coastline: a thin pale line where the height crosses sea level
-		for ( let py = 1; py < N - 1; py ++ ) for ( let px = 1; px < N - 1; px ++ ) {
-
-			const i = py * N + px, a = B.h[ i ] >= 0;
-			if ( a && ( B.h[ i - 1 ] < 0 || B.h[ i + 1 ] < 0 || B.h[ i - N ] < 0 || B.h[ i + N ] < 0 ) ) {
-
-				const o = i * 4;
-				d[ o ] = d[ o ] * 0.3 + 245 * 0.7; d[ o + 1 ] = d[ o + 1 ] * 0.3 + 241 * 0.7; d[ o + 2 ] = d[ o + 2 ] * 0.3 + 228 * 0.7;
-
-			}
-
-		}
-
-		const ctx = B.ctx;
-		ctx.putImageData( B.img, 0, 0 );
-		const P = ( x, z ) => [ ( x - X0 ) * PPM, ( z - Z0 ) * PPM ];
-
-		// village pads (house footprints)
-		ctx.fillStyle = `rgb(${ C.pad.join( ',' ) })`;
-		for ( const p of T.pads || [] ) {
-
-			const [ cx, cy ] = P( p.x, p.z );
-			const r = Math.max( 1.5, p.radius * 0.8 * PPM );
-			ctx.fillRect( cx - r, cy - r, 2 * r, 2 * r );
-
-		}
-
-		// the pier and its head
-		const W = WORLD.pier;
-		ctx.fillStyle = '#d9c7a0';
-		ctx.strokeStyle = 'rgba(40, 30, 20, 0.55)';
-		ctx.lineWidth = 0.6;
-		const [ px0, pz0 ] = P( W.x - Math.max( W.width, 3 ) / 2, W.zStart );
-		const [ px1, pz1 ] = P( W.x + Math.max( W.width, 3 ) / 2, W.zEnd );
-		ctx.fillRect( px0, pz0, px1 - px0, pz1 - pz0 );
-		ctx.strokeRect( px0, pz0, px1 - px0, pz1 - pz0 );
-		const [ hx0, hz0 ] = P( W.x - W.headWidth / 2, W.zEnd - W.headDepth );
-		const [ hx1, hz1 ] = P( W.x + W.headWidth / 2, W.zEnd );
-		ctx.fillRect( hx0, hz0, hx1 - hx0, hz1 - hz0 );
-		ctx.strokeRect( hx0, hz0, hx1 - hx0, hz1 - hz0 );
-		B.done = true;
-		B.img = null;
+		ctx.clearRect( 0, 0, N, N ); ctx.putImageData( img, ( N - n ) / 2, ( N - n ) / 2 );
+		const P = ( wx, wz ) => [ ( wx - x ) / scale + n / 2 + ( N - n ) / 2, ( wz - z ) / scale + n / 2 + ( N - n ) / 2 ];
+		ctx.strokeStyle = 'rgba(185, 238, 230, 0.2)'; ctx.lineWidth = 1;
+		for ( let m = - 600; m <= 600; m += 100 ) { const q = P( x + m, z ); ctx.beginPath(); ctx.moveTo( q[ 0 ], 0 ); ctx.lineTo( q[ 0 ], N ); ctx.stroke(); const r = P( x, z + m ); ctx.beginPath(); ctx.moveTo( 0, r[ 1 ] ); ctx.lineTo( N, r[ 1 ] ); ctx.stroke(); }
+		ctx.fillStyle = 'rgba(245, 235, 207, 0.72)';
+		for ( const p of T.pads || [] ) { const q = P( p.x, p.z ), r = Math.max( 2, p.radius * 0.8 / scale ); ctx.fillRect( q[ 0 ] - r, q[ 1 ] - r, r * 2, r * 2 ); }
+		const W = WORLD.pier; const a = P( W.x - Math.max( W.width, 3 ) / 2, W.zStart ), b = P( W.x + Math.max( W.width, 3 ) / 2, W.zEnd );
+		ctx.fillStyle = '#e7d19d'; ctx.strokeStyle = 'rgba(24, 33, 43, 0.8)'; ctx.lineWidth = 2; ctx.fillRect( a[ 0 ], a[ 1 ], b[ 0 ] - a[ 0 ], b[ 1 ] - a[ 1 ] ); ctx.strokeRect( a[ 0 ], a[ 1 ], b[ 0 ] - a[ 0 ], b[ 1 ] - a[ 1 ] );
+		this._lastMapScale = scale;
 
 	}
 
 	// ---- per frame
 	update( dt ) {
 
-		this._bakeStep();
-		const app = this.game.app, cam = app.camera, p = app.player;
+			const app = this.game.app, cam = app.camera, p = app.player;
 		if ( this._viewSize < 0 || ! this._ro ) this._viewSize = this.view.clientWidth;
 		const size = this._viewSize;
 		if ( ! size ) return;
@@ -351,12 +277,21 @@ export class Minimap {
 		// zoom: close on foot, wider at sea
 		const want = p.mode === 'boat' || p.mode === 'deck' || p.mode === 'swim' ? 240 : 110;
 		this.radiusM += ( want - this.radiusM ) * ( 1 - Math.exp( - dt * 1.5 ) );
-		const kpm = R / this.radiusM; // css px per metre
+			const kpm = R / this.radiusM; // css px per metre
 
-		// map: player at the centre, forward up
-		const rot = - Math.PI / 2 - Math.atan2( fz, fx );
-		const s = kpm / PPM;
-		this._setStyle( this.canvas, 'transform', `translate(${ R }px, ${ R }px) rotate(${ rot }rad) scale(${ s }) translate(${ - ( x - X0 ) * PPM }px, ${ - ( z - Z0 ) * PPM }px)` );
+			// Generate the visible terrain around the player continuously. The canvas is
+			// intentionally rebuilt in world space, so moving boats reveal fresh coastline.
+			this._mapT -= dt;
+			if ( this._mapT <= 0 || ! this._rendered ) {
+				this._mapT = MAP_REFRESH;
+				this._renderRealtime( x, z, this.radiusM );
+				this._rendered = true;
+			}
+
+			// map: player at the centre, forward up
+			const rot = - Math.PI / 2 - Math.atan2( fz, fx );
+			const s = kpm / ( MAP_PIXELS / ( this.radiusM * WORLD_PAD * 2 ) );
+			this._setStyle( this.canvas, 'transform', `translate(${ R }px, ${ R }px) rotate(${ rot }rad) scale(${ s }) translate(${ -N / 2 }px, ${ -N / 2 }px)` );
 
 		const place = ( el, dx, dz, edgeInset, arrow ) => {
 
