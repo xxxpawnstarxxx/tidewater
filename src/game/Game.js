@@ -8,7 +8,7 @@ import { FishingRod } from './FishingRod.js';
 import { FishStand } from './FishStand.js';
 import { Chandlery } from './Chandlery.js';
 import { CatchDisplay } from './CatchDisplay.js';
-import { UPGRADES, fuelBurn } from './Gear.js';
+import { UPGRADES } from './Gear.js';
 import { GameSystemGroup } from './systems/GameSystems.js';
 
 // how long the catch card stays up unless dismissed (ms)
@@ -225,11 +225,6 @@ export class Game {
 
 		p.busy = rod.lineInWater || rod.state === 'windup';
 
-		this.updateBoat( dt );
-
-		// the traders
-		for ( const v of this.vendors ) v.update( dt, p.mode === 'walk' ? p.position : null );
-		this.updateVendors( inp, p );
 
 		// prompts when the player has nothing to say
 		if ( ! p.prompt && can ) p.prompt = this.prompt();
@@ -279,65 +274,6 @@ export class Game {
 				: { key: 'LMB', text: 'Hold to reel · let go when the tension goes red' };
 			case 'landing': return null;
 			default: return null;
-
-		}
-
-	}
-
-	// fuel burn at the helm (the engine stops when the tank is dry) and the fish finder
-	updateBoat( dt ) {
-
-		const app = this.app, b = app.boatCtl, p = app.player, s = this.state;
-		if ( b.driven ) {
-
-			const left = s.burn( fuelBurn( b.rpm ) * dt );
-			if ( left <= 0 ) {
-
-				b.throttle = 0;
-				if ( ! this._fuelOut ) this.toast( 'Out of fuel · buy diesel at the chandlery by the boathouse', 4000 );
-				this._fuelOut = true;
-
-			}
-
-		} else if ( this._wasDriven ) s.save();
-		this._wasDriven = b.driven;
-
-		if ( ( p.mode === 'boat' || p.mode === 'deck' ) && s.stats.finder ) {
-
-			this._sonarT -= dt;
-			if ( this._sonarT <= 0 ) {
-
-				this._sonarT = 0.5;
-				const x = b.position.x, z = b.position.z;
-				const depth = Math.max( 0, - app.terrainData.heightAt( x, z ) );
-				const h = this.habitatAtPoint( x, z, depth );
-				let rich = 0;
-				for ( const k in h ) rich += h[ k ];
-				this._sonar = { depth, fish: Math.min( 1, rich / 1.4 ) };
-
-			}
-
-		}
-
-	}
-
-	updateVendors( inp, p ) {
-
-		const hud = this.hud;
-		let near = null;
-		if ( p.mode === 'walk' ) for ( const v of this.vendors ) if ( v.inRange( p.position ) ) near = v;
-		for ( const v of this.vendors ) v.talking = !! ( hud && hud.standOpen && hud.vendor === v );
-		if ( hud && hud.standOpen && ( ! near || near !== hud.vendor ) ) hud.closeStand();
-		if ( ! near || this.fight || this._cardDismissed || ( hud && hud.catchOpen ) ) return;
-		if ( ! p.prompt ) p.prompt = { key: 'E', text: hud && hud.standOpen ? 'Leave' : `Talk to ${ near.name.split( ' ·' )[ 0 ] }` };
-		if ( inp.hit( 'KeyE' ) ) {
-
-			if ( ! hud ) {
-
-				if ( near.kind === 'buyer' ) this.sellAll(); // headless: straight sale
-
-			} else if ( hud.standOpen ) hud.closeStand();
-			else hud.openStand( near );
 
 		}
 
